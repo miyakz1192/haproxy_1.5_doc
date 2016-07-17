@@ -194,7 +194,7 @@ global構造体の初期化タイミング
 以下の通り、mainが始まった段階である程度初期化されている
 メンバーがある(例：chksize)。これはデフォルト値で、
 haproxy.cのglobal構造体の定義時に構造体の各メンバに
-代入されている値である。
+代入されている値である。::
 
 
   [root@chefserver haproxy-1.5]# gdb ./haproxy 
