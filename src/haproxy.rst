@@ -184,6 +184,324 @@ tune配下
 main関数
 ==========
 
+main関数の解析::
+
+  int main(int argc, char **argv)
+  {
+  	int err, retry;
+  	struct rlimit limit;
+  	char errmsg[100];
+  	int pidfd = -1;
+  
+  	init(argc, argv);
+  	signal_register_fct(SIGQUIT, dump, SIGQUIT);
+  	signal_register_fct(SIGUSR1, sig_soft_stop, SIGUSR1);
+  	signal_register_fct(SIGHUP, sig_dump_state, SIGHUP);
+  
+  	/* Always catch SIGPIPE even on platforms which define MSG_NOSIGNAL.
+  	 * Some recent FreeBSD setups report broken pipes, and MSG_NOSIGNAL
+  	 * was defined there, so let's stay on the safe side.
+  	 */
+  	signal_register_fct(SIGPIPE, NULL, 0);
+  
+  	/* ulimits */
+  	if (!global.rlimit_nofile)
+  		global.rlimit_nofile = global.maxsock;
+  
+  	if (global.rlimit_nofile) {
+  		limit.rlim_cur = limit.rlim_max = global.rlimit_nofile;
+  		if (setrlimit(RLIMIT_NOFILE, &limit) == -1) {
+  			Warning("[%s.main()] Cannot raise FD limit to %d.\n", argv[0], global.rlimit_nofile);
+  		}
+  	}
+  
+  	if (global.rlimit_memmax) {
+  		limit.rlim_cur = limit.rlim_max =
+  			global.rlimit_memmax * 1048576 / global.nbproc;
+  #ifdef RLIMIT_AS
+  		if (setrlimit(RLIMIT_AS, &limit) == -1) {
+  			Warning("[%s.main()] Cannot fix MEM limit to %d megs.\n",
+  				argv[0], global.rlimit_memmax);
+  		}
+  #else
+  		if (setrlimit(RLIMIT_DATA, &limit) == -1) {
+  			Warning("[%s.main()] Cannot fix MEM limit to %d megs.\n",
+  				argv[0], global.rlimit_memmax);
+  		}
+  #endif
+  	}
+  
+  	/* We will loop at most 100 times with 10 ms delay each time.
+  	 * That's at most 1 second. We only send a signal to old pids
+  	 * if we cannot grab at least one port.
+  	 */
+  	retry = MAX_START_RETRIES;
+  	err = ERR_NONE;
+  	while (retry >= 0) {
+  		struct timeval w;
+  		err = start_proxies(retry == 0 || nb_oldpids == 0);
+  		/* exit the loop on no error or fatal error */
+  		if ((err & (ERR_RETRYABLE|ERR_FATAL)) != ERR_RETRYABLE)
+  			break;
+  		if (nb_oldpids == 0 || retry == 0)
+  			break;
+  
+  		/* FIXME-20060514: Solaris and OpenBSD do not support shutdown() on
+  		 * listening sockets. So on those platforms, it would be wiser to
+  		 * simply send SIGUSR1, which will not be undoable.
+  		 */
+  		if (tell_old_pids(SIGTTOU) == 0) {
+  			/* no need to wait if we can't contact old pids */
+  			retry = 0;
+  			continue;
+  		}
+  		/* give some time to old processes to stop listening */
+  		w.tv_sec = 0;
+  		w.tv_usec = 10*1000;
+  		select(0, NULL, NULL, NULL, &w);
+  		retry--;
+  	}
+  
+  	/* Note: start_proxies() sends an alert when it fails. */
+  	if ((err & ~ERR_WARN) != ERR_NONE) {
+  		if (retry != MAX_START_RETRIES && nb_oldpids) {
+  			protocol_unbind_all(); /* cleanup everything we can */
+  			tell_old_pids(SIGTTIN);
+  		}
+  		exit(1);
+  	}
+  
+  	if (listeners == 0) {
+  		Alert("[%s.main()] No enabled listener found (check the <listen> keywords) ! Exiting.\n", argv[0]);
+  		/* Note: we don't have to send anything to the old pids because we
+  		 * never stopped them. */
+  		exit(1);
+  	}
+  
+  	err = protocol_bind_all(errmsg, sizeof(errmsg));
+  	if ((err & ~ERR_WARN) != ERR_NONE) {
+  		if ((err & ERR_ALERT) || (err & ERR_WARN))
+  			Alert("[%s.main()] %s.\n", argv[0], errmsg);
+  
+  		Alert("[%s.main()] Some protocols failed to start their listeners! Exiting.\n", argv[0]);
+  		protocol_unbind_all(); /* cleanup everything we can */
+  		if (nb_oldpids)
+  			tell_old_pids(SIGTTIN);
+  		exit(1);
+  	} else if (err & ERR_WARN) {
+  		Alert("[%s.main()] %s.\n", argv[0], errmsg);
+  	}
+  
+  	/* prepare pause/play signals */
+  	signal_register_fct(SIGTTOU, sig_pause, SIGTTOU);
+  	signal_register_fct(SIGTTIN, sig_listen, SIGTTIN);
+  
+  	/* MODE_QUIET can inhibit alerts and warnings below this line */
+  
+  	global.mode &= ~MODE_STARTING;
+  	if ((global.mode & MODE_QUIET) && !(global.mode & MODE_VERBOSE)) {
+  		/* detach from the tty */
+  		fclose(stdin); fclose(stdout); fclose(stderr);
+  	}
+  
+  	/* open log & pid files before the chroot */
+  	if (global.mode & (MODE_DAEMON | MODE_SYSTEMD) && global.pidfile != NULL) {
+  		unlink(global.pidfile);
+  		pidfd = open(global.pidfile, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+  		if (pidfd < 0) {
+  			Alert("[%s.main()] Cannot create pidfile %s\n", argv[0], global.pidfile);
+  			if (nb_oldpids)
+  				tell_old_pids(SIGTTIN);
+  			protocol_unbind_all();
+  			exit(1);
+  		}
+  	}
+  
+  #ifdef CONFIG_HAP_CTTPROXY
+  	if (global.last_checks & LSTCHK_CTTPROXY) {
+  		int ret;
+  
+  		ret = check_cttproxy_version();
+  		if (ret < 0) {
+  			Alert("[%s.main()] Cannot enable cttproxy.\n%s",
+  			      argv[0],
+  			      (ret == -1) ? "  Incorrect module version.\n"
+  			      : "  Make sure you have enough permissions and that the module is loaded.\n");
+  			protocol_unbind_all();
+  			exit(1);
+  		}
+  	}
+  #endif
+  
+  	if ((global.last_checks & LSTCHK_NETADM) && global.uid) {
+  		Alert("[%s.main()] Some configuration options require full privileges, so global.uid cannot be changed.\n"
+  		      "", argv[0]);
+  		protocol_unbind_all();
+  		exit(1);
+  	}
+  
+  	/* If the user is not root, we'll still let him try the configuration
+  	 * but we inform him that unexpected behaviour may occur.
+  	 */
+  	if ((global.last_checks & LSTCHK_NETADM) && getuid())
+  		Warning("[%s.main()] Some options which require full privileges"
+  			" might not work well.\n"
+  			"", argv[0]);
+  
+  	/* chroot if needed */
+  	if (global.chroot != NULL) {
+  		if (chroot(global.chroot) == -1 || chdir("/") == -1) {
+  			Alert("[%s.main()] Cannot chroot(%s).\n", argv[0], global.chroot);
+  			if (nb_oldpids)
+  				tell_old_pids(SIGTTIN);
+  			protocol_unbind_all();
+  			exit(1);
+  		}
+  	}
+  
+  	if (nb_oldpids)
+  		nb_oldpids = tell_old_pids(oldpids_sig);
+  
+  	/* Note that any error at this stage will be fatal because we will not
+  	 * be able to restart the old pids.
+  	 */
+  
+  	/* setgid / setuid */
+  	if (global.gid) {
+  		if (getgroups(0, NULL) > 0 && setgroups(0, NULL) == -1)
+  			Warning("[%s.main()] Failed to drop supplementary groups. Using 'gid'/'group'"
+  				" without 'uid'/'user' is generally useless.\n", argv[0]);
+  
+  		if (setgid(global.gid) == -1) {
+  			Alert("[%s.main()] Cannot set gid %d.\n", argv[0], global.gid);
+  			protocol_unbind_all();
+  			exit(1);
+  		}
+  	}
+  
+  	if (global.uid && setuid(global.uid) == -1) {
+  		Alert("[%s.main()] Cannot set uid %d.\n", argv[0], global.uid);
+  		protocol_unbind_all();
+  		exit(1);
+  	}
+  
+  	/* check ulimits */
+  	limit.rlim_cur = limit.rlim_max = 0;
+  	getrlimit(RLIMIT_NOFILE, &limit);
+  	if (limit.rlim_cur < global.maxsock) {
+  		Warning("[%s.main()] FD limit (%d) too low for maxconn=%d/maxsock=%d. Please raise 'ulimit-n' to %d or more to avoid any trouble.\n",
+  			argv[0], (int)limit.rlim_cur, global.maxconn, global.maxsock, global.maxsock);
+  	}
+  
+  	if (global.mode & (MODE_DAEMON | MODE_SYSTEMD)) {
+  		struct proxy *px;
+  		struct peers *curpeers;
+  		int ret = 0;
+  		int *children = calloc(global.nbproc, sizeof(int));
+  		int proc;
+  
+  		/* the father launches the required number of processes */
+  		for (proc = 0; proc < global.nbproc; proc++) {
+  			ret = fork();
+  			if (ret < 0) {
+  				Alert("[%s.main()] Cannot fork.\n", argv[0]);
+  				protocol_unbind_all();
+  				exit(1); /* there has been an error */
+  			}
+  			else if (ret == 0) /* child breaks here */
+  				break;
+  			children[proc] = ret;
+  			if (pidfd >= 0) {
+  				char pidstr[100];
+  				snprintf(pidstr, sizeof(pidstr), "%d\n", ret);
+  				shut_your_big_mouth_gcc(write(pidfd, pidstr, strlen(pidstr)));
+  			}
+  			relative_pid++; /* each child will get a different one */
+  		}
+  
+  #ifdef USE_CPU_AFFINITY
+  		if (proc < global.nbproc &&  /* child */
+  		    proc < LONGBITS &&       /* only the first 32/64 processes may be pinned */
+  		    global.cpu_map[proc])    /* only do this if the process has a CPU map */
+  			sched_setaffinity(0, sizeof(unsigned long), (void *)&global.cpu_map[proc]);
+  #endif
+  		/* close the pidfile both in children and father */
+  		if (pidfd >= 0) {
+  			//lseek(pidfd, 0, SEEK_SET);  /* debug: emulate eglibc bug */
+  			close(pidfd);
+  		}
+  
+  		/* We won't ever use this anymore */
+  		free(oldpids);        oldpids = NULL;
+  		free(global.chroot);  global.chroot = NULL;
+  		free(global.pidfile); global.pidfile = NULL;
+  
+  		if (proc == global.nbproc) {
+  			if (global.mode & MODE_SYSTEMD) {
+  				protocol_unbind_all();
+  				for (proc = 0; proc < global.nbproc; proc++)
+  					while (waitpid(children[proc], NULL, 0) == -1 && errno == EINTR);
+  			}
+  			exit(0); /* parent must leave */
+  		}
+  
+  		/* we might have to unbind some proxies from some processes */
+  		px = proxy;
+  		while (px != NULL) {
+  			if (px->bind_proc && px->state != PR_STSTOPPED) {
+  				if (!(px->bind_proc & (1UL << proc)))
+  					stop_proxy(px);
+  			}
+  			px = px->next;
+  		}
+  
+  		/* we might have to unbind some peers sections from some processes */
+  		for (curpeers = peers; curpeers; curpeers = curpeers->next) {
+  			if (!curpeers->peers_fe)
+  				continue;
+  
+  			if (curpeers->peers_fe->bind_proc & (1UL << proc))
+  				continue;
+  
+  			stop_proxy(curpeers->peers_fe);
+  			/* disable this peer section so that it kills itself */
+  			curpeers->peers_fe = NULL;
+  		}
+  
+  		free(children);
+  		children = NULL;
+  		/* if we're NOT in QUIET mode, we should now close the 3 first FDs to ensure
+  		 * that we can detach from the TTY. We MUST NOT do it in other cases since
+  		 * it would have already be done, and 0-2 would have been affected to listening
+  		 * sockets
+  		 */
+  		if (!(global.mode & MODE_QUIET) || (global.mode & MODE_VERBOSE)) {
+  			/* detach from the tty */
+  			fclose(stdin); fclose(stdout); fclose(stderr);
+  			global.mode &= ~MODE_VERBOSE;
+  			global.mode |= MODE_QUIET; /* ensure that we won't say anything from now */
+  		}
+  		pid = getpid(); /* update child's pid */
+  		setsid();
+  		fork_poller();
+  	}
+  
+  	protocol_enable_all();
+  	/*
+  	 * That's it : the central polling loop. Run until we stop.
+  	 */
+  	run_poll_loop();
+  
+  	/* Free all Hash Keys and all Hash elements */
+  	appsession_cleanup();
+  	/* Do some cleanup */ 
+  	deinit();
+      
+  	exit(0);
+  }
+  
+
+
 
 init関数
 =========
