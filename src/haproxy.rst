@@ -192,21 +192,34 @@ main関数の解析::
   	struct rlimit limit;
   	char errmsg[100];
   	int pidfd = -1;
+
+ここでローカル変数として、rlimit型構造体のインスタンス(limit)を
+宣言する。rlimitの詳細は以下。
+https://linuxjm.osdn.jp/html/LDP_man-pages/man2/setrlimit.2.html
+
+::
   
   	init(argc, argv);
   	signal_register_fct(SIGQUIT, dump, SIGQUIT);
   	signal_register_fct(SIGUSR1, sig_soft_stop, SIGUSR1);
   	signal_register_fct(SIGHUP, sig_dump_state, SIGHUP);
+
+init関数を実行して初期化と、シグナルハンドラの設定を行う::
   
   	/* Always catch SIGPIPE even on platforms which define MSG_NOSIGNAL.
   	 * Some recent FreeBSD setups report broken pipes, and MSG_NOSIGNAL
   	 * was defined there, so let's stay on the safe side.
   	 */
   	signal_register_fct(SIGPIPE, NULL, 0);
+
+MSG_NOSIGNALを定義しているプラットフォームなら、いつもSIGPIPEを
+キャッチする。ある最近のFreeBSDはbroken pipe時にMSG_NOSIGNALをレポートする。なので、安全サイドに倒して、SIGPIPEのハンドラを設定する。::
   
   	/* ulimits */
   	if (!global.rlimit_nofile)
   		global.rlimit_nofile = global.maxsock;
+
+global.rlimit_nofileが0であれば、その値をglobal.maxsockで初期化。::
   
   	if (global.rlimit_nofile) {
   		limit.rlim_cur = limit.rlim_max = global.rlimit_nofile;
