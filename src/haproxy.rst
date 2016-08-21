@@ -227,6 +227,12 @@ global.rlimit_nofileが0であれば、その値をglobal.maxsockで初期化。
   			Warning("[%s.main()] Cannot raise FD limit to %d.\n", argv[0], global.rlimit_nofile);
   		}
   	}
+
+FDの限界数を設定する(RLIMIT_NOFILE)
+https://linuxjm.osdn.jp/html/LDP_man-pages/man2/setrlimit.2.html
+このプロセスがオープンできるファイルディスクリプター数の最大値より 1 大きい値を指定する。 (open(2), pipe(2), dup(2) などにより) この上限を超えようとした場合、エラー EMFILE が発生する (歴史的に、BSD ではこの上限は RLIMIT_OFILE という名前となっている)。
+
+::
   
   	if (global.rlimit_memmax) {
   		limit.rlim_cur = limit.rlim_max =
@@ -236,11 +242,24 @@ global.rlimit_nofileが0であれば、その値をglobal.maxsockで初期化。
   			Warning("[%s.main()] Cannot fix MEM limit to %d megs.\n",
   				argv[0], global.rlimit_memmax);
   		}
+
+コンパイルオプションにRLIMIT_ASが設定されていれば、RLIMIT_ASを設定する。RLIMIT_ASの説明は次の通り。プロセスの仮想メモリー (アドレス空間) の最大サイズ (バイト単位)。 この制限は brk(2), mmap(2), mremap(2) の呼び出しに影響し、この制限を超えた場合は エラー ENOMEM で失敗する。 また自動的なスタック拡張にも失敗する (さらに sigaltstack(2) を使った代替スタックを利用可能にしていなかった場合には、 SIGSEGV を生成してそのプロセスを kill する)。 この値は long 型なので、32 ビットの long 型を持つマシンでは、 この制限は最大で 2 GiB になるか、この資源が無制限になる。
+
+haproxyではglobal.rlimit_memmaxはメガバイト単位(1048576バイト)単位で設定するため、global.rlimit_memmax*1048576となっている。さらに、global.nbproc(haproxyのプロセス数)で割っていることに注意。
+
+::
+
   #else
   		if (setrlimit(RLIMIT_DATA, &limit) == -1) {
   			Warning("[%s.main()] Cannot fix MEM limit to %d megs.\n",
   				argv[0], global.rlimit_memmax);
   		}
+
+コンパイルオプションにRLIMIT_ASが設定されていない場合は、RLIMIT_DATAを使用する。RLIMIT_DATAの説明は次の通り。RLIMIT_DATA
+プロセスのデータセグメント (初期化されたデータ・初期化されていないデータ・ヒープ) の最大値。 このリミットは brk(2) と sbrk(2) の呼び出しに影響する。 これらの関数は、このリソースのソフトリミットに達すると、 エラー ENOMEM で失敗する。
+
+::
+
   #endif
   	}
   

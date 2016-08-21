@@ -17,9 +17,10 @@ start_proxiesを実行してlistenerに属しているprotocolをbindする処�
 (src/proto_tcp.rst)
 
 
-proxy(グローバル変数)がhaproxyの本体(proxyはリスト構造)。proxy毎に、listenerが存在する。また、listenerにはprotocol listenerが存在する。
+proxy(グローバル変数)がhaproxyの本体(proxyはリスト構造で接続されている)。
+proxy毎に、listenerが存在する。また、listenerにはprotocol listenerが存在する。
 
-proxyの状態
+HAproxyの状態
 ================
 
 proxy.hから。::
