@@ -10,6 +10,18 @@ start_proxiesのlistener->proto->bindから呼ばれる。
 動作概要
 ==========
 
+1) listenerのソケットを作る
+2) O_NONBLOCKに設定する
+3) SO_REUSEADDRを設定する(グレースフルrebootのため)
+4) SO_LINGER(ソケットclose時に待たないようにするため)
+5) IP_TRANSPARENTを指定し、透過型proxyとして動作
+6) IP_FREEBINDを指定し、net interfaceに存在しないIP/PORTでbind可能にする
+7) SO_BINDTODEVICEでバインド先ローカルnet interfaceを指定
+8) TCP_MAXSEG でTCPセグメントサイズを必要に応じて設定
+9) TCP_DEFER_ACCEPTを設定し、サーバのlistenからacceptまでの動作速度を改善(3WHのlast ACKを待たずに処理開始)
+10) TCP_FASTOPENを設定し、3WHのパケットを減らす
+11) TCP_QUICKACKを指定して、即座にACKを返すようにする。
+
 動作詳細
 ==========
 
@@ -381,6 +393,9 @@ TCP_QUICKACKのman 7 tcpの説明は以下。
 
 なお、このオプションは有効になったり、ならなかったりするらしい。詳細は以下のblog参照。
 http://www.anarg.jp/personal/t-tugawa/note/misc/delayed_ack.html
+
+まぁ、このオプションは動作自体が不安定らしいが、なぜ、そもそもHAProxyで
+このオプションを設定する必要があるのだろう？そこは謎である。
 ::
 
   	/* the socket is ready */
