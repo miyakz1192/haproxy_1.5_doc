@@ -190,6 +190,33 @@ linger自体は有効にしているものの、実質は0秒でexitが復帰す
   				err |= ERR_ALERT;
   			}
   		break;
+
+さらに、ここでsetsockoptを使ってソケットオプションの設定を行っている。
+IP_TRANSPARENTのman 7 ipの説明を見ると以下。
+
+  IP_TRANSPARENT (Linux 2.6.24 以降)
+  このブール値のオプションを有効にすると、 このソケットで透過プロキシ (transparent proxy) ができるようになる。 このソケットオプションを使うと、呼び出したアプリケーションは、 ローカルではない IP アドレスをバインドして、ローカルの端点として自分以外のアドレス (foreign address) を持つクライアントやサーバの両方として動作できるようになる。 注意: この機能が動作するためには、自分以外のアドレス宛のパケットが透過プロキシが動作するマシン (すなわちソケットオプション IP_TRANSPARENT を利用するアプリケーションが動作しているシステム) 経由で転送されるように、 ルーティングが設定される必要がある。 このソケットオプションを有効にするには、スーパーユーザー特権 (CAP_NET_ADMIN ケーパビリティ) が必要である。
+  iptables の TPROXY ターゲットで透過プロキシリダイレクション (TProxy redirection) を行うには、リダイレクトされるソケットに対して このオプションを設定する必要がある。
+
+透過型proxy自体の説明は以下が参考になる
+https://tech.jstream.jp/blog/cache/transparent_proxy/
+
+また、IP_FREEBINDについての説明は以下。
+
+  IP_FREEBIND (Linux 2.4 以降)
+  このブール値のオプションを有効にすると、ローカルではない IP アドレスや存在 しない IP アドレスをバインドできるようになる。これを使うと、対応するネット ワークインターフェイスがなかったり、アプリケーションがソケットをバインドしようと する時点で特定の動的 IP アドレスが有効になっていなかったりしても、ソケットを 接続待ち状態 (listening) にできるようになる。 このオプションは、下記に説明がある ip_nonlocal_bind /proc インターフェイス のソケット単位の設定である。
+
+IP_FREEBINDとIP_TRANSPARENTはセットで使うのであろう。
+
+★ 注意★  IP_FREEBINDとIP_TRANSPARENTはCentOS6.5のman 7 ipには載っていなかった。
+おそらく、未サポートなのだろう。CentOS系でHAProxyを使って、途中で
+バージョンを上げる場合は非互換が起きるのでチェックが必要かもしれない。
+
+IP_BINDANY/SO_BINDANYはどうも、FreeBSDのオプションらしい。
+
+::
+
+
   		case AF_INET6:
   			if (1
   #if defined(IPV6_TRANSPARENT)
@@ -211,6 +238,9 @@ linger自体は有効にしているものの、実質は0秒でexitが復帰す
   		break;
   		}
   	}
+
+IPv4と同様のことを、IPv6で行っているだけ。
+::
   
   #ifdef SO_BINDTODEVICE
   	/* Note: this might fail if not CAP_NET_RAW */
@@ -222,6 +252,16 @@ linger自体は有効にしているものの、実質は0秒でexitが復帰す
   		}
   	}
   #endif
+
+man 7 socketによると説明は以下。
+
+  SO_BINDTODEVICE
+  このソケットを、引き数で渡したインターフェース名で指定される ("eth0" のような) 特定のデバイスにバインドする。 名前が空文字列だったり、オプションの長さ (optlen) が 0 の場合には、 ソケットのバインドが削除される。 渡すオプションは、インターフェース名が 入ったヌル文字で終端された可変長の文字列である。 文字列の最大のサイズは IFNAMSIX である。 ソケットがインターフェースにバインドされると、 その特定のインターフェースから受信されたパケットだけを処理する。 このオプションはいくつかのソケットタイプ、 特に AF_INET に対してのみ動作する点に注意すること。 パケットソケットではサポートされていない (通常の bind(2) を使うこと)。
+  Linux 3.8 より前のバージョンでは、このソケットオプションは getsockname(2) で設定することはできたが、取得することができなかった。 Linux 3.8 以降では、読み出すことができる。 optlen 引き数には、 デバイス名を格納するのに十分なバッファーサイズを渡すべきであり、 IFNAMSIZ バイトにすることを推奨する。 実際のデバイス名の長さは optlen 引き数に格納されて返される。
+
+::
+
+
   #if defined(TCP_MAXSEG)
   	if (listener->maxseg > 0) {
   		if (setsockopt(fd, IPPROTO_TCP, TCP_MAXSEG,
@@ -231,6 +271,16 @@ linger自体は有効にしているものの、実質は0秒でexitが復帰す
   		}
   	}
   #endif
+
+man 7 tcpによると説明は以下。
+
+  TCP_MAXSEG
+  送出 TCP パケットの最大セグメントサイズ。 Linux 2.2 以前と Linux 2.6.28 以降では、このオプションを接続確立の前に設定すると、初期パケット で他端にアナウンスする MSS の値も変化する。インターフェースの MTU より も大きな (あるいは大きくなってしまった) 値は効果を持たない。 また TCP は、この値よりも最小・最大の制限の方を優先する。
+
+注：ジャンボパケットを使える環境だと有効に働くオプションなのだろうか。
+
+::
+
   #if defined(TCP_DEFER_ACCEPT)
   	if (listener->options & LI_O_DEF_ACCEPT) {
   		/* defer accept by up to one second */
@@ -240,6 +290,16 @@ linger自体は有効にしているものの、実質は0秒でexitが復帰す
   			err |= ERR_WARN;
   		}
   	}
+
+man 7 tcpによると以下。
+  TCP_DEFER_ACCEPT (Linux 2.4 以降)
+  これを用いると、リスナはデータがソケットに到着した時のみ目覚めるようになる。 整数値 (秒) をとり、 TCP が接続を完了しようと試みる回数を制限できる。 移植性の必要なプログラムではこのオプションを用いるべきではない。
+
+この仕組み自体の解説は以下のブログが参考になる。
+http://blog.yuuk.io/entry/2013/07/21/022859
+
+::
+
   #endif
   #if defined(TCP_FASTOPEN)
   	if (listener->options & LI_O_TCP_FO) {
@@ -251,6 +311,11 @@ linger自体は有効にしているものの、実質は0秒でexitが復帰す
   		}
   	}
   #endif
+
+FASTOPENについては以下のblog記事が参考になる。
+https://html5experts.jp/jxck/3529/
+::
+
   #if defined(IPV6_V6ONLY)
   	if (listener->options & LI_O_V6ONLY)
                   setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &one, sizeof(one));
@@ -263,11 +328,32 @@ linger自体は有効にしているものの、実質は0秒でexitが復帰す
   		msg = "cannot bind socket";
   		goto tcp_close_return;
   	}
+
+ソケットをbindする。一応、man 2 bindの説明は以下。
+
+説明
+       socket(2)  でソケットが作成されたとき、そのソケットは名前空間 (アドレス
+       ・ファミリー) に存在するが、アドレスは割り当てられていない。 bind()  は
+       、 ファイルディスクリプタ sockfd で参照されるソケットに addr で指定され
+       たアドレスを割り当てる。 addrlen には addr が指すアドレス構造体のサイズ
+       を バイト単位で指定する。伝統的にこの操作は「ソケットに名前をつける」と
+       呼ばれる。
+
+
+::
   
   	ready = 0;
   	ready_len = sizeof(ready);
   	if (getsockopt(fd, SOL_SOCKET, SO_ACCEPTCONN, &ready, &ready_len) == -1)
   		ready = 0;
+
+SO_ACCEPTCONNのman 7 socketの説明は以下。
+  SO_ACCEPTCONN
+  このソケットが listen(2) によって接続待ち受け状態に設定されているかどうかを示す値を返す。 値 0 は listen 状態のソケットでないことを、 値 1 は listen 状態のソケットであることを示す。このソケットオプションは読み込み専用である。
+
+getsockoptが失敗した場合は、readyを0に設定する。つまりlisten状態のソケットが無いということを前提にする。
+
+::
   
   	if (!(ext && ready) && /* only listen if not already done by external process */
   	    listen(fd, listener->backlog ? listener->backlog : listener->maxconn) == -1) {
@@ -275,12 +361,28 @@ linger自体は有効にしているものの、実質は0秒でexitが復帰す
   		msg = "cannot listen to socket";
   		goto tcp_close_return;
   	}
+
+もし、外部プロセスによって該当ソケットがすでにlisten状態になければ、listenを
+実行する。
+
+(HAProxyでこのタイミングで外部プロセスがこのソケットをlistenすることってあるの？)
+::
+
   
   #if defined(TCP_QUICKACK)
   	if (listener->options & LI_O_NOQUICKACK)
   		setsockopt(fd, IPPROTO_TCP, TCP_QUICKACK, &zero, sizeof(zero));
   #endif
-  
+
+TCP_QUICKACKのman 7 tcpの説明は以下。
+  TCP_QUICKACK (Linux 2.4.4 以降)
+  設定されていると quickack モードを有効にし、クリアされると無効にする。 通常の TCP 動作では ack は必要に応じて遅延されるのに対し、 quickack モードでは ack はすぐに送信される。 このフラグは永続的なものではなく、 quickack モードから/モードへ切り替えるためのものである。 これ以降の TCP プロトコルの動作によっては、 内部のプロトコル処理や、遅延 ack タイムアウトの発生、 データ転送などの要因によって、 再び quickack から出たり入ったりする。 移植性の必要なプログラムではこのオプションを用いるべきではない。
+(このタイミングで外部プロセスがこのソケットをlistenすることってあるの？)
+
+なお、このオプションは有効になったり、ならなかったりするらしい。詳細は以下のblog参照。
+http://www.anarg.jp/personal/t-tugawa/note/misc/delayed_ack.html
+::
+
   	/* the socket is ready */
   	listener->fd = fd;
   	listener->state = LI_LISTEN;
@@ -302,29 +404,5 @@ linger自体は有効にしているものの、実質は0秒でexitが復帰す
   	close(fd);
   	goto tcp_return;
   }
-  
-  /* This function creates all TCP sockets bound to the protocol entry <proto>.
-   * It is intended to be used as the protocol's bind_all() function.
-   * The sockets will be registered but not added to any fd_set, in order not to
-   * loose them across the fork(). A call to enable_all_listeners() is needed
-   * to complete initialization. The return value is composed from ERR_*.
-   */
-  static int tcp_bind_listeners(struct protocol *proto, char *errmsg, int errlen)
-  {
-  	struct listener *listener;
-  	int err = ERR_NONE;
-  
-  	list_for_each_entry(listener, &proto->listeners, proto_list) {
-  		err |= tcp_bind_listener(listener, errmsg, errlen);
-  		if (err & ERR_ABORT)
-  			break;
-  	}
-  
-  	return err;
-  }
-
-
-
-
 
 
