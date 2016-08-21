@@ -395,7 +395,13 @@ TCP_QUICKACKのman 7 tcpの説明は以下。
 http://www.anarg.jp/personal/t-tugawa/note/misc/delayed_ack.html
 
 まぁ、このオプションは動作自体が不安定らしいが、なぜ、そもそもHAProxyで
-このオプションを設定する必要があるのだろう？そこは謎である。
+このオプションを設定する必要があるのだろう？その理解には以下のwikiが
+役に立つ。https://ja.wikipedia.org/wiki/TCP%E9%81%85%E5%BB%B6ACK
+
+太郎と花子の話だが、要するにクライアント側がもしかしたら、nagleアルゴリズムが
+有効になっている場合がある。それを考慮して、HAProxy側がどんどん、
+ACKを返して、nagleを使っているクライアントの送信を促すようにしていると思う。
+
 ::
 
   	/* the socket is ready */
