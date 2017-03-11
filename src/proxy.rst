@@ -111,6 +111,15 @@ lister->protoのダンプ例は以下::
     pause = 0x48c6af <tcp_pause_listener>, listeners = {n = 0x70b350, 
       p = 0x70b350}, nb_listeners = 1, list = {n = 0x6e4f58, p = 0x6e1a20}}
   (gdb) 
+
+  (gdb) p listener
+  $1 = (struct listener *) 0x70a260
+  (gdb) p listener->proto
+  $2 = (struct protocol *) 0x6e3f80
+  (gdb) p listener->proto->bind
+  $3 = (int (*)(struct listener *, char *, int)) 0x48bb75 <tcp_bind_listener>
+  (gdb) 
+
   
 ここで、bind(tcp_bind_listeners)の定義は(src/proto_tcp.c)にある。tcp_bind_listenersの
 第一引数に渡すlistenerから、アドレスファミリ、バインド対象のアドレスの情報を取得し、

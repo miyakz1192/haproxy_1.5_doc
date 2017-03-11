@@ -23,7 +23,7 @@ proxy毎に、listenerが存在する。また、listenerにはprotocol listener
 HAproxyの状態
 ================
 
-proxy.hから。::
+include/types/proxy.hから。::
 
   /* values for proxy->state */
   enum pr_state {
@@ -80,7 +80,19 @@ listenerの状態遷移
    * not rely on this state.
    */
 
+実験構成
+=========
 
+HAproxy Server(host name: chef_server_centos6)
+ ---> network_name:vpn_physical(192.168.200.211/24)
+
+Client(host name: chef_client_centos6)
+  ---> network_name:vpn_physical(192.168.200.150/24)
+
+backend Production Server(host name: centos7_1511)
+  ---> network_name:vpn_physical(192.168.200.142/24)
+
+各ComputeのOSはCentOS6.5
 
 メモ
 ====

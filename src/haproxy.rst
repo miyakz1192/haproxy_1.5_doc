@@ -194,7 +194,7 @@ main関数の解析::
   	int pidfd = -1;
 
 ここでローカル変数として、rlimit型構造体のインスタンス(limit)を
-宣言する。rlimitの詳細は以下。
+宣言する。rlimitの詳細は以下。資源の制限を取得/設定するlinuxのAPI
 https://linuxjm.osdn.jp/html/LDP_man-pages/man2/setrlimit.2.html
 
 ::
@@ -272,6 +272,12 @@ haproxyではglobal.rlimit_memmaxはメガバイト単位(1048576バイト)単�
   	while (retry >= 0) {
   		struct timeval w;
   		err = start_proxies(retry == 0 || nb_oldpids == 0);
+
+次に、start_proxiesを呼び出し、haproxyのlistenerの起動を行う。
+start_proxiesはproxy.cに入っている(proxy.rstを参照)
+::
+
+
   		/* exit the loop on no error or fatal error */
   		if ((err & (ERR_RETRYABLE|ERR_FATAL)) != ERR_RETRYABLE)
   			break;
